@@ -1,0 +1,32 @@
+{
+  "name": "diss-final",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "build:web": "expo export --platform web",
+    "routine:json": "python scripts/excel_to_json.py",
+    "routine:upload": "node scripts/upload_to_firestore.js",
+    "routine:check": "node scripts/upload_to_firestore.js --dry-run"
+  },
+  "dependencies": {
+    "@react-navigation/native": "^7.2.4",
+    "@react-navigation/stack": "^7.9.2",
+    "expo": "~55.0.24",
+    "expo-status-bar": "~55.0.6",
+    "firebase": "^12.13.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-native": "0.83.6",
+    "react-native-safe-area-context": "^5.7.0",
+    "react-native-screens": "^4.25.1",
+    "react-native-web": "^0.21.0"
+  },
+  "private": true,
+  "devDependencies": {
+    "@expo/ngrok": "^4.1.3"
+  }
+}
