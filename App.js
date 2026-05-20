@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import useAppUpdates from './useAppUpdates';
 import {
   ActivityIndicator,
   Alert,
@@ -17,9 +18,10 @@ import { signInAnonymously, signInWithEmailAndPassword, onAuthStateChanged, sign
 import { collection, doc, getDocs, writeBatch } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 import seedRoutine from './data.json';
+import RoutineBuilder from './RoutineBuilder';
 
 const DAY_ORDER = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const SECTIONS = ['My Routine', 'Teachers', 'Students', 'Classes', 'Rooms', 'Admin'];
+const BASE_SECTIONS = ['My Routine', 'Teachers', 'Students', 'Classes', 'Rooms', 'Admin'];
 const CACHE_KEY = 'diss-routine-cache-v1';
 const TEACHER_KEY = 'diss-selected-teacher-v1';
 
@@ -363,6 +365,7 @@ const parseScheduleFile = async (file) => {
 };
 
 export default function App() {
+  useAppUpdates();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [user, setUser] = useState(null);
@@ -380,6 +383,14 @@ export default function App() {
   const [uploadStatus, setUploadStatus] = useState('');
   const [uploadingRoutine, setUploadingRoutine] = useState(false);
   const todayName = getTodayName();
+
+  // Show Routine Builder only for admin (email) logins, not anonymous viewers
+  const sections = useMemo(() => {
+    if (user && !user.isAnonymous) {
+      return [...BASE_SECTIONS, 'Routine Builder'];
+    }
+    return BASE_SECTIONS;
+  }, [user]);
 
   useEffect(() => {
     const savedTeacher = getStorage()?.getItem(TEACHER_KEY);
@@ -845,6 +856,19 @@ export default function App() {
     </View>
   );
 
+  const renderRoutineBuilder = () => (
+    <View style={styles.panel}>
+      <Text style={styles.panelTitle}>Routine Builder</Text>
+      <Text style={styles.panelCopy}>
+        Build the weekly routine day-by-day. Tap any slot to assign a teacher, subject, and room.
+        Conflicts are highlighted automatically.
+      </Text>
+      <View style={{ marginTop: 14 }}>
+        <RoutineBuilder schedules={schedules} onSaved={fetchSchedules} />
+      </View>
+    </View>
+  );
+
   const renderActiveSection = () => {
     if (activeSection === 'My Routine') {
       return renderMyRoutine();
@@ -860,6 +884,10 @@ export default function App() {
     }
     if (activeSection === 'Rooms') {
       return renderRooms();
+    }
+
+    if (activeSection === 'Routine Builder') {
+      return renderRoutineBuilder();
     }
 
     return renderAdmin();
@@ -923,7 +951,7 @@ export default function App() {
 
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sectionNav}>
-          {SECTIONS.map((section) => (
+          {sections.map((section) => (
             <TouchableOpacity
               key={section}
               onPress={() => setActiveSection(section)}
