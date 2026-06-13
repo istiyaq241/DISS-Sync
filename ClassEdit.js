@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -113,7 +113,7 @@ const wrapHtml = (title, bodyHtml) => `
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function ClassEdit({ currentUser, schedules, onSaved }) {
+export default function ClassEdit({ currentUser, schedules, onSaved, theme }) {
   const [activeTab, setActiveTab] = useState('Schedule');
   const [dateRange] = useState(getDateRange);
 
@@ -159,6 +159,9 @@ export default function ClassEdit({ currentUser, schedules, onSaved }) {
     role: actor.role,
   };
   const isTeacherLikeUser = isTeacherLikeRole(actor.role);
+  const canAssignTeacher = actor.role === 'admin' || actor.role === 'senior';
+  const canEditSchedule = canAssignTeacher;
+  const s = useMemo(() => createClassEditStyles(theme), [theme]);
 
   const daySchedule = schedules
     .filter((s) => s.day === selectedDate.dayName)
@@ -170,13 +173,20 @@ export default function ClassEdit({ currentUser, schedules, onSaved }) {
     .filter((s) => !isTeacherLikeUser || sameText(s.teacherName, actor.displayName))
     .sort((a, b) => a.startSort - b.startSort);
 
-  const classNos = [...new Set(schedules.map((s) => s.classNo))].sort((a, b) => {
+  const classNos = [...new Set(
+    schedules
+      .filter((slot) => !isTeacherLikeUser || sameText(slot.teacherName, actor.displayName))
+      .map((s) => s.classNo),
+  )].sort((a, b) => {
     if (a === 'Pre-Class') return -1;
     if (b === 'Pre-Class') return 1;
     return a.localeCompare(b, undefined, { numeric: true });
   });
 
-  const filteredTeachers = TEACHERS.filter(
+  const teacherOptions = [...new Set([...TEACHERS, ...schedules.map((slot) => slot.teacherName).filter(Boolean)])]
+    .sort((a, b) => a.localeCompare(b));
+
+  const filteredTeachers = teacherOptions.filter(
     (t) => !teacherSearch || t.toLowerCase().includes(teacherSearch.toLowerCase()),
   );
 
@@ -543,7 +553,12 @@ export default function ClassEdit({ currentUser, schedules, onSaved }) {
       {daySchedule.map((slot) => {
         const tc = typeColors(slot.classType);
         return (
-          <TouchableOpacity key={slot.id} onPress={() => openSlotEdit(slot)} style={s.slotCard}>
+          <TouchableOpacity
+            key={slot.id}
+            disabled={!canEditSchedule}
+            onPress={() => openSlotEdit(slot)}
+            style={s.slotCard}
+          >
             <View style={s.slotCardRow}>
               <View style={{ flex: 1 }}>
                 <Text style={s.slotSubject}>{slot.subject}</Text>
@@ -554,7 +569,7 @@ export default function ClassEdit({ currentUser, schedules, onSaved }) {
                 <View style={[s.typeBadge, { backgroundColor: tc.bg, borderColor: tc.border }]}>
                   <Text style={[s.typeBadgeText, { color: tc.text }]}>{slot.classType}</Text>
                 </View>
-                <Text style={s.editHint}>Tap to edit</Text>
+                {canEditSchedule && <Text style={s.editHint}>Assign</Text>}
               </View>
             </View>
           </TouchableOpacity>
@@ -576,7 +591,7 @@ export default function ClassEdit({ currentUser, schedules, onSaved }) {
                   value={teacherSearch}
                   onChangeText={setTeacherSearch}
                   placeholder={slotDraft.teacherName || 'Search teacher…'}
-                  placeholderTextColor={slotDraft.teacherName ? '#1f2d3d' : '#9aaabb'}
+                  placeholderTextColor={slotDraft.teacherName ? (theme?.text || '#1f2d3d') : (theme?.placeholder || '#9aaabb')}
                 />
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.chipRow}>
                   {filteredTeachers.map((t) => (
@@ -613,6 +628,7 @@ export default function ClassEdit({ currentUser, schedules, onSaved }) {
                   value={slotDraft.roomNo}
                   onChangeText={(v) => setSlotDraft((d) => ({ ...d, roomNo: v }))}
                   placeholder="Room number"
+                  placeholderTextColor={theme?.placeholder || '#9aaabb'}
                   keyboardType="numeric"
                 />
 
@@ -726,6 +742,8 @@ export default function ClassEdit({ currentUser, schedules, onSaved }) {
         ))}
       </ScrollView>
 
+      {!notesSlot && (
+        <View>
       <Text style={s.fieldLabel}>Select Class Session</Text>
       {notesDaySchedule.length === 0 && <Text style={s.emptyMsg}>No classes on {notesDate.dayName}.</Text>}
       {notesDaySchedule.map((slot) => (
@@ -743,6 +761,8 @@ export default function ClassEdit({ currentUser, schedules, onSaved }) {
           </View>
         </TouchableOpacity>
       ))}
+        </View>
+      )}
 
       {!!notesSlot && (
         <View style={s.notesForm}>
@@ -750,6 +770,10 @@ export default function ClassEdit({ currentUser, schedules, onSaved }) {
             {notesSlot.subject} — Class {notesSlot.classNo}
           </Text>
           <Text style={s.notesFormSub}>{notesSlot.teacherName}  ·  {notesDate.dateStr}</Text>
+
+          <TouchableOpacity onPress={() => setNotesSlot(null)} style={s.changeMini}>
+            <Text style={s.changeMiniText}>Change class</Text>
+          </TouchableOpacity>
 
           <Text style={s.fieldLabel}>Topics Covered</Text>
           <TextInput
@@ -900,20 +924,34 @@ export default function ClassEdit({ currentUser, schedules, onSaved }) {
 
 // ─── Styles ───────────────────────────────────────────────────────────────────
 
-const s = StyleSheet.create({
+const createClassEditStyles = (theme = {}) => {
+  const colors = {
+    surface: theme.surface || '#fff',
+    surfaceSoft: theme.surfaceSoft || '#f7f9fc',
+    chip: theme.chip || '#f0f4f9',
+    border: theme.border || '#d8e2ed',
+    text: theme.text || '#1f2d3d',
+    muted: theme.muted || '#667789',
+    mutedStrong: theme.mutedStrong || '#46586b',
+    primary: theme.primary || '#174ea6',
+    inputText: theme.inputText || '#1f2d3d',
+    placeholder: theme.placeholder || '#9aaabb',
+  };
+
+  return StyleSheet.create({
   // Tab bar
   tabRow: { gap: 6, paddingBottom: 2 },
   tab: {
     alignItems: 'center',
-    backgroundColor: '#f0f4f9',
+    backgroundColor: colors.chip,
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
     minWidth: 80,
   },
-  tabActive: { backgroundColor: '#174ea6' },
+  tabActive: { backgroundColor: colors.primary },
   tabIcon: { fontSize: 18, marginBottom: 2 },
-  tabText: { color: '#46586b', fontSize: 11, fontWeight: '800' },
+  tabText: { color: colors.mutedStrong, fontSize: 11, fontWeight: '800' },
   tabTextActive: { color: '#fff' },
   tabContent: { marginTop: 16 },
 
@@ -921,75 +959,75 @@ const s = StyleSheet.create({
   chipRow: { gap: 8, paddingBottom: 4 },
   dateChip: {
     alignItems: 'center',
-    backgroundColor: '#f0f4f9',
+    backgroundColor: colors.chip,
     borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 10,
     minWidth: 76,
   },
-  dateChipActive: { backgroundColor: '#174ea6' },
-  dateChipLabel: { color: '#2f4052', fontSize: 13, fontWeight: '800' },
+  dateChipActive: { backgroundColor: colors.primary },
+  dateChipLabel: { color: colors.text, fontSize: 13, fontWeight: '800' },
   dateChipLabelActive: { color: '#fff' },
-  dateChipSub: { color: '#667789', fontSize: 10, marginTop: 2 },
+  dateChipSub: { color: colors.muted, fontSize: 10, marginTop: 2 },
   dateChipSubActive: { color: '#bfcfff' },
 
   // Section row (label + action)
   sectionRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 14, marginBottom: 6 },
-  sectionCount: { color: '#46586b', fontSize: 13, fontWeight: '800' },
-  exportMini: { backgroundColor: '#edf2f7', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
-  exportMiniText: { color: '#174ea6', fontSize: 12, fontWeight: '800' },
+  sectionCount: { color: colors.mutedStrong, fontSize: 13, fontWeight: '800' },
+  exportMini: { backgroundColor: colors.chip, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 6 },
+  exportMiniText: { color: colors.primary, fontSize: 12, fontWeight: '800' },
 
   // Slot cards
   slotCard: {
-    backgroundColor: '#fff',
-    borderColor: '#dce5ef',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
     borderRadius: 10,
     borderWidth: 1,
     marginTop: 8,
     padding: 14,
   },
-  slotCardSelected: { borderColor: '#174ea6', borderWidth: 2, backgroundColor: '#f0f5ff' },
+  slotCardSelected: { borderColor: colors.primary, borderWidth: 2, backgroundColor: colors.surfaceSoft },
   slotCardRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  slotSubject: { color: '#1f2d3d', fontSize: 15, fontWeight: '800' },
-  slotMeta: { color: '#667789', fontSize: 12, marginTop: 3 },
-  slotTeacher: { color: '#46586b', fontSize: 13, fontWeight: '700', marginTop: 6 },
-  editHint: { color: '#174ea6', fontSize: 11, marginTop: 6, fontWeight: '700' },
-  selectedTick: { color: '#174ea6', fontSize: 22, fontWeight: '800' },
+  slotSubject: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  slotMeta: { color: colors.muted, fontSize: 12, marginTop: 3 },
+  slotTeacher: { color: colors.mutedStrong, fontSize: 13, fontWeight: '700', marginTop: 6 },
+  editHint: { color: colors.primary, fontSize: 11, marginTop: 6, fontWeight: '700' },
+  selectedTick: { color: colors.primary, fontSize: 22, fontWeight: '800' },
 
   // Type badge
   typeBadge: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 4, alignSelf: 'flex-start', marginBottom: 4 },
   typeBadgeText: { fontSize: 11, fontWeight: '800' },
 
   // General chips
-  chip: { backgroundColor: '#f0f4f9', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9 },
-  chipOn: { backgroundColor: '#174ea6' },
-  chipText: { color: '#2f4052', fontSize: 13, fontWeight: '700' },
+  chip: { backgroundColor: colors.chip, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 9 },
+  chipOn: { backgroundColor: colors.primary },
+  chipText: { color: colors.text, fontSize: 13, fontWeight: '700' },
   chipTextOn: { color: '#fff' },
 
   // Labels, inputs
-  fieldLabel: { color: '#46586b', fontSize: 11, fontWeight: '800', marginTop: 18, marginBottom: 6, textTransform: 'uppercase' },
+  fieldLabel: { color: colors.mutedStrong, fontSize: 11, fontWeight: '800', marginTop: 18, marginBottom: 6, textTransform: 'uppercase' },
   textInput: {
-    backgroundColor: '#f7f9fc', borderColor: '#d8e2ed', borderRadius: 8, borderWidth: 1,
-    color: '#1f2d3d', fontSize: 14, marginBottom: 8, padding: 12,
+    backgroundColor: colors.surfaceSoft, borderColor: colors.border, borderRadius: 8, borderWidth: 1,
+    color: colors.inputText, fontSize: 14, marginBottom: 8, padding: 12,
   },
   textArea: { minHeight: 72, textAlignVertical: 'top' },
   searchBox: {
-    backgroundColor: '#f7f9fc', borderColor: '#d8e2ed', borderRadius: 8, borderWidth: 1,
-    color: '#1f2d3d', fontSize: 14, marginBottom: 8, padding: 11,
+    backgroundColor: colors.surfaceSoft, borderColor: colors.border, borderRadius: 8, borderWidth: 1,
+    color: colors.inputText, fontSize: 14, marginBottom: 8, padding: 11,
   },
 
   // Modal
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' },
   modal: {
-    backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20,
     maxHeight: '88%', padding: 20, paddingBottom: 0,
   },
-  modalTitle: { color: '#1f2d3d', fontSize: 20, fontWeight: '800' },
-  modalSub: { color: '#667789', fontSize: 13, marginTop: 3, marginBottom: 2 },
+  modalTitle: { color: colors.text, fontSize: 20, fontWeight: '800' },
+  modalSub: { color: colors.muted, fontSize: 13, marginTop: 3, marginBottom: 2 },
   modalFooter: { flexDirection: 'row', gap: 10, marginBottom: 28, marginTop: 22 },
-  btnCancel: { alignItems: 'center', backgroundColor: '#edf2f7', borderRadius: 10, flex: 1, padding: 15 },
-  btnCancelText: { color: '#2f4052', fontSize: 15, fontWeight: '800' },
-  btnSave: { alignItems: 'center', backgroundColor: '#174ea6', borderRadius: 10, flex: 1, padding: 15 },
+  btnCancel: { alignItems: 'center', backgroundColor: colors.chip, borderRadius: 10, flex: 1, padding: 15 },
+  btnCancelText: { color: colors.text, fontSize: 15, fontWeight: '800' },
+  btnSave: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: 10, flex: 1, padding: 15 },
   btnSaveText: { color: '#fff', fontSize: 15, fontWeight: '800' },
 
   // Attendance
@@ -1001,51 +1039,54 @@ const s = StyleSheet.create({
   attendBtnText: { color: '#fff', fontSize: 15, fontWeight: '800' },
   attendBtnSub: { color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 4 },
   sessionLog: {
-    backgroundColor: '#f7f9fc', borderColor: '#e0e7f0', borderRadius: 10,
+    backgroundColor: colors.surfaceSoft, borderColor: colors.border, borderRadius: 10,
     borderWidth: 1, marginTop: 16, padding: 14,
   },
-  sessionLogTitle: { color: '#1f2d3d', fontSize: 14, fontWeight: '800' },
-  sessionRow: { alignItems: 'center', borderTopColor: '#e0e7f0', borderTopWidth: 1, flexDirection: 'row', gap: 10, marginTop: 10, paddingTop: 10 },
+  sessionLogTitle: { color: colors.text, fontSize: 14, fontWeight: '800' },
+  sessionRow: { alignItems: 'center', borderTopColor: colors.border, borderTopWidth: 1, flexDirection: 'row', gap: 10, marginTop: 10, paddingTop: 10 },
   sessionDot: { backgroundColor: '#9e9e9e', borderRadius: 6, height: 12, width: 12 },
   sessionDotOpen: { backgroundColor: '#2e7d32' },
-  sessionLabel: { color: '#46586b', fontSize: 12, fontWeight: '800' },
-  sessionTime: { color: '#1f2d3d', fontSize: 13, marginTop: 2 },
+  sessionLabel: { color: colors.mutedStrong, fontSize: 12, fontWeight: '800' },
+  sessionTime: { color: colors.text, fontSize: 13, marginTop: 2 },
   activePill: { backgroundColor: '#e8f5e9', borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
   activePillText: { color: '#2e7d32', fontSize: 10, fontWeight: '800' },
 
   // Class notes
   notesForm: {
-    backgroundColor: '#f7f9fc', borderColor: '#e0e7f0', borderRadius: 10,
+    backgroundColor: colors.surfaceSoft, borderColor: colors.border, borderRadius: 10,
     borderWidth: 1, marginTop: 14, padding: 14,
   },
-  notesFormTitle: { color: '#1f2d3d', fontSize: 16, fontWeight: '800' },
-  notesFormSub: { color: '#667789', fontSize: 12, marginTop: 3 },
+  notesFormTitle: { color: colors.text, fontSize: 16, fontWeight: '800' },
+  notesFormSub: { color: colors.muted, fontSize: 12, marginTop: 3 },
+  changeMini: { alignSelf: 'flex-start', backgroundColor: colors.chip, borderRadius: 8, marginTop: 10, paddingHorizontal: 10, paddingVertical: 8 },
+  changeMiniText: { color: colors.primary, fontSize: 12, fontWeight: '800' },
   notesBtns: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  exportFull: { alignItems: 'center', backgroundColor: '#edf2f7', borderRadius: 10, flex: 1, padding: 15 },
-  exportFullText: { color: '#174ea6', fontSize: 14, fontWeight: '800' },
+  exportFull: { alignItems: 'center', backgroundColor: colors.chip, borderRadius: 10, flex: 1, padding: 15 },
+  exportFullText: { color: colors.primary, fontSize: 14, fontWeight: '800' },
 
   // Tokens
   studentRow: {
-    alignItems: 'center', backgroundColor: '#fff', borderColor: '#e0e7f0',
+    alignItems: 'center', backgroundColor: colors.surface, borderColor: colors.border,
     borderRadius: 10, borderWidth: 1, flexDirection: 'row',
     justifyContent: 'space-between', marginTop: 8, padding: 12,
   },
-  studentName: { color: '#1f2d3d', flex: 1, fontSize: 14, fontWeight: '700' },
+  studentName: { color: colors.text, flex: 1, fontSize: 14, fontWeight: '700' },
   tokenControls: { alignItems: 'center', flexDirection: 'row', gap: 8 },
   tokenBtnMinus: { alignItems: 'center', backgroundColor: '#feeceb', borderRadius: 8, height: 36, justifyContent: 'center', width: 36 },
   tokenBtnPlus: { alignItems: 'center', backgroundColor: '#e8f5e9', borderRadius: 8, height: 36, justifyContent: 'center', width: 36 },
-  tokenBtnText: { fontSize: 20, fontWeight: '800', color: '#1f2d3d' },
-  tokenBadge: { alignItems: 'center', backgroundColor: '#edf2f7', borderRadius: 8, minWidth: 40, paddingHorizontal: 10, paddingVertical: 6 },
-  tokenCount: { color: '#174ea6', fontSize: 18, fontWeight: '800' },
+  tokenBtnText: { fontSize: 20, fontWeight: '800', color: colors.text },
+  tokenBadge: { alignItems: 'center', backgroundColor: colors.chip, borderRadius: 8, minWidth: 40, paddingHorizontal: 10, paddingVertical: 6 },
+  tokenCount: { color: colors.primary, fontSize: 18, fontWeight: '800' },
   addStudentRow: { alignItems: 'center', flexDirection: 'row', gap: 8, marginTop: 14 },
-  addStudentBtn: { alignItems: 'center', backgroundColor: '#174ea6', borderRadius: 10, padding: 14 },
+  addStudentBtn: { alignItems: 'center', backgroundColor: colors.primary, borderRadius: 10, padding: 14 },
   addStudentBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },
 
   // Empty / misc
-  emptyMsg: { color: '#9aaabb', fontSize: 13, marginTop: 16, textAlign: 'center', lineHeight: 20 },
-  emptyCard: { alignItems: 'center', backgroundColor: '#f7f9fc', borderRadius: 10, marginTop: 16, padding: 24 },
-  emptyCardText: { color: '#46586b', fontSize: 14, fontWeight: '700', textAlign: 'center' },
-  emptyCardSub: { color: '#9aaabb', fontSize: 12, marginTop: 6, textAlign: 'center' },
-  exportBtn: { alignItems: 'center', backgroundColor: '#edf2f7', borderRadius: 10, marginTop: 10, padding: 13 },
-  exportBtnText: { color: '#174ea6', fontSize: 14, fontWeight: '800' },
-});
+  emptyMsg: { color: colors.placeholder, fontSize: 13, marginTop: 16, textAlign: 'center', lineHeight: 20 },
+  emptyCard: { alignItems: 'center', backgroundColor: colors.surfaceSoft, borderRadius: 10, marginTop: 16, padding: 24 },
+  emptyCardText: { color: colors.mutedStrong, fontSize: 14, fontWeight: '700', textAlign: 'center' },
+  emptyCardSub: { color: colors.placeholder, fontSize: 12, marginTop: 6, textAlign: 'center' },
+  exportBtn: { alignItems: 'center', backgroundColor: colors.chip, borderRadius: 10, marginTop: 10, padding: 13 },
+  exportBtnText: { color: colors.primary, fontSize: 14, fontWeight: '800' },
+  });
+};

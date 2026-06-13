@@ -9,11 +9,18 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  useColorScheme,
   View,
 } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
-import { signInAnonymously, signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth';
+import {
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  signOut,
+} from 'firebase/auth';
 import { collection, doc, getDoc, getDocs, writeBatch } from 'firebase/firestore';
 import { auth, db } from './firebaseConfig';
 // data.json removed from bundle - Firebase is the source of truth.
@@ -26,6 +33,42 @@ const BASE_SECTIONS = ['My Routine', 'Teachers', 'Students', 'Classes', 'Rooms',
 const CACHE_KEY = 'diss-routine-cache-v1';
 const TEACHER_KEY = 'diss-selected-teacher-v1';
 const TEACHING_ROLES = ['teacher', 'senior', 'volunteer', 'caregiver'];
+const ADMIN_SECTIONS = ['My Routine', 'Teachers', 'Students', 'Classes', 'Rooms', 'Class Edit', 'Routine Builder'];
+const SENIOR_SECTIONS = ['My Routine', 'Teachers', 'Students', 'Classes', 'Rooms', 'Class Edit', 'Routine Builder'];
+const TEACHER_SECTIONS = ['My Routine', 'Class Edit'];
+const VIEWER_SECTIONS = ['My Routine', 'Teachers', 'Students', 'Classes', 'Rooms'];
+const LIGHT_THEME = {
+  background: '#eef3f8',
+  surface: '#fff',
+  surfaceSoft: '#f7f9fc',
+  chip: '#edf2f7',
+  border: '#d8e2ed',
+  borderStrong: '#c8d4e2',
+  text: '#1f2d3d',
+  muted: '#607184',
+  mutedStrong: '#46586b',
+  primary: '#174ea6',
+  danger: '#c5221f',
+  dangerSoft: '#feeceb',
+  inputText: '#1f2d3d',
+  placeholder: '#8a9aac',
+};
+const DARK_THEME = {
+  background: '#101418',
+  surface: '#171d23',
+  surfaceSoft: '#202832',
+  chip: '#26313d',
+  border: '#303b47',
+  borderStrong: '#405063',
+  text: '#edf3f8',
+  muted: '#b2c0ce',
+  mutedStrong: '#d5dee8',
+  primary: '#7cb7ff',
+  danger: '#ff7a72',
+  dangerSoft: '#3a2024',
+  inputText: '#f5f9fc',
+  placeholder: '#8fa0b2',
+};
 
 const getStorage = () => {
   if (typeof window !== 'undefined' && window.localStorage) {
@@ -371,8 +414,12 @@ const parseScheduleFile = async (file) => {
 
 export default function App() {
   useAppUpdates();
+  const colorScheme = useColorScheme();
+  const theme = colorScheme === 'dark' ? DARK_THEME : LIGHT_THEME;
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [authNotice, setAuthNotice] = useState('');
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null);
   const [schedules, setSchedules] = useState([]);
@@ -406,10 +453,16 @@ export default function App() {
   }, [currentRole, user, userProfile]);
 
   const sections = useMemo(() => {
-    if (currentRole === 'admin' || currentRole === 'senior') {
-      return [...BASE_SECTIONS, 'Routine Builder'];
+    if (currentRole === 'admin') {
+      return ADMIN_SECTIONS;
     }
-    return BASE_SECTIONS;
+    if (currentRole === 'senior') {
+      return SENIOR_SECTIONS;
+    }
+    if (isTeachingRole(currentRole)) {
+      return TEACHER_SECTIONS;
+    }
+    return VIEWER_SECTIONS;
   }, [currentRole]);
 
   useEffect(() => {
@@ -442,6 +495,12 @@ export default function App() {
 
     return unsubscribe;
   }, []);
+
+  useEffect(() => {
+    if (!sections.includes(activeSection)) {
+      setActiveSection(sections[0]);
+    }
+  }, [activeSection, sections]);
 
   const teacherNames = useMemo(() => {
     return Array.from(new Set(schedules.map((item) => item.teacherName).filter((name) => name && name !== 'Unknown teacher')))
@@ -629,11 +688,38 @@ export default function App() {
     }
 
     setAuthLoading(true);
+    setAuthNotice('');
 
     try {
       await signInWithEmailAndPassword(auth, email.trim(), password);
     } catch (error) {
       Alert.alert('Login failed', error.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const cleanEmail = email.trim();
+
+    if (!cleanEmail) {
+      const message = 'Type your email first, then tap Forgot password.';
+      setAuthNotice(message);
+      Alert.alert('Email needed', message);
+      return;
+    }
+
+    setAuthLoading(true);
+
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      const message = `Password reset sent to ${cleanEmail}. Please check the inbox and spam folder.`;
+      setAuthNotice(message);
+      Alert.alert('Password reset sent', message);
+    } catch (error) {
+      const message = error?.message || 'Could not send the password reset email.';
+      setAuthNotice(message);
+      Alert.alert('Reset failed', message);
     } finally {
       setAuthLoading(false);
     }
@@ -925,7 +1011,7 @@ export default function App() {
       <Text style={styles.panelTitle}>Class Edit</Text>
       <Text style={styles.panelCopy}>Edit today's or upcoming classes, track attendance, add class notes, and manage student tokens.</Text>
       <View style={styles.adminDivider} />
-      <ClassEdit currentUser={currentUser} schedules={schedules} onSaved={fetchSchedules} />
+      <ClassEdit currentUser={currentUser} schedules={schedules} onSaved={fetchSchedules} theme={theme} />
       <View style={styles.adminDivider} />
       <Text style={styles.uploadSectionLabel}>Upload New Routine</Text>
       <TouchableOpacity disabled={uploadingRoutine} onPress={openRoutineFilePicker} style={styles.uploadButton}>
@@ -979,7 +1065,7 @@ export default function App() {
   if (loading) {
     return (
       <SafeAreaProvider>
-        <ExpoStatusBar style="dark" />
+        <ExpoStatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
         <View style={styles.center}>
           <ActivityIndicator size="large" color="#1f6feb" />
           <Text selectable style={styles.loadingText}>{syncMessage}</Text>
@@ -992,7 +1078,7 @@ export default function App() {
     return (
       <SafeAreaProvider>
         <SafeAreaView style={styles.authScreen}>
-          <ExpoStatusBar style="dark" />
+          <ExpoStatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
           <View style={styles.loginBox}>
             <Text style={styles.brand}>DISS Routine</Text>
             <Text style={styles.tagline}>Teachers can continue as viewers. Admins should use email login.</Text>
@@ -1001,16 +1087,26 @@ export default function App() {
               keyboardType="email-address"
               onChangeText={setEmail}
               placeholder="Email"
+              placeholderTextColor={theme.placeholder}
               style={styles.input}
               value={email}
             />
             <TextInput
+              autoCapitalize="none"
+              autoComplete="current-password"
+              importantForAutofill="yes"
               onChangeText={setPassword}
               placeholder="Password"
+              placeholderTextColor={theme.placeholder}
               secureTextEntry
               style={styles.input}
+              textContentType="password"
               value={password}
             />
+            <TouchableOpacity disabled={authLoading} onPress={handleForgotPassword} style={styles.linkButton}>
+              <Text style={styles.linkButtonText}>Forgot password?</Text>
+            </TouchableOpacity>
+            {!!authNotice && <Text selectable style={styles.authNotice}>{authNotice}</Text>}
             <TouchableOpacity disabled={authLoading} onPress={handleLogin} style={styles.primaryButton}>
               {authLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryButtonText}>Login</Text>}
             </TouchableOpacity>
@@ -1026,7 +1122,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <SafeAreaView style={styles.screen}>
-        <ExpoStatusBar style="dark" />
+        <ExpoStatusBar style={colorScheme === 'dark' ? 'light' : 'dark'} />
         <View style={styles.header}>
           <View style={styles.headerText}>
             <Text style={styles.title}>DISS Routine</Text>
@@ -1056,31 +1152,35 @@ export default function App() {
   );
 }
 
-const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: '#eef3f8' },
-  authScreen: { flex: 1, backgroundColor: '#eef3f8', justifyContent: 'center' },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#eef3f8', padding: 24 },
-  loadingText: { marginTop: 12, color: '#51606f', textAlign: 'center' },
+const createStyles = (theme) => StyleSheet.create({
+  screen: { flex: 1, backgroundColor: theme.background },
+  authScreen: { flex: 1, backgroundColor: theme.background, justifyContent: 'center' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.background, padding: 24 },
+  loadingText: { marginTop: 12, color: theme.muted, textAlign: 'center' },
   loginBox: { width: '86%', maxWidth: 420, alignSelf: 'center' },
-  brand: { fontSize: 38, fontWeight: '800', color: '#174ea6', textAlign: 'center' },
-  tagline: { fontSize: 15, color: '#51606f', textAlign: 'center', marginTop: 8, marginBottom: 28 },
+  brand: { fontSize: 38, fontWeight: '800', color: theme.primary, textAlign: 'center' },
+  tagline: { fontSize: 15, color: theme.muted, textAlign: 'center', marginTop: 8, marginBottom: 28 },
   input: {
-    backgroundColor: '#fff',
-    borderColor: '#c8d4e2',
+    backgroundColor: theme.surface,
+    borderColor: theme.borderStrong,
     borderRadius: 8,
     borderWidth: 1,
+    color: theme.inputText,
     fontSize: 16,
     marginTop: 12,
     padding: 14,
   },
-  primaryButton: { backgroundColor: '#174ea6', borderRadius: 8, alignItems: 'center', marginTop: 12, padding: 16 },
+  linkButton: { alignSelf: 'flex-end', paddingHorizontal: 4, paddingVertical: 10 },
+  linkButtonText: { color: theme.primary, fontSize: 14, fontWeight: '800' },
+  authNotice: { backgroundColor: theme.surfaceSoft, borderColor: theme.border, borderRadius: 8, borderWidth: 1, color: theme.mutedStrong, fontSize: 13, lineHeight: 19, marginBottom: 4, padding: 10 },
+  primaryButton: { backgroundColor: theme.primary, borderRadius: 8, alignItems: 'center', marginTop: 12, padding: 16 },
   primaryButtonText: { color: '#fff', fontSize: 16, fontWeight: '800' },
-  secondaryButton: { alignItems: 'center', backgroundColor: '#edf2f7', borderRadius: 8, marginTop: 10, padding: 15 },
-  secondaryButtonText: { color: '#174ea6', fontSize: 15, fontWeight: '800' },
+  secondaryButton: { alignItems: 'center', backgroundColor: theme.chip, borderRadius: 8, marginTop: 10, padding: 15 },
+  secondaryButtonText: { color: theme.primary, fontSize: 15, fontWeight: '800' },
   header: {
     alignItems: 'center',
-    backgroundColor: '#fff',
-    borderBottomColor: '#d7e1ec',
+    backgroundColor: theme.surface,
+    borderBottomColor: theme.border,
     borderBottomWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1088,70 +1188,70 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   headerText: { flex: 1, paddingRight: 10 },
-  title: { color: '#174ea6', fontSize: 22, fontWeight: '800' },
-  subtitle: { color: '#667789', fontSize: 12, marginTop: 2 },
-  logoutButton: { backgroundColor: '#c5221f', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
+  title: { color: theme.primary, fontSize: 22, fontWeight: '800' },
+  subtitle: { color: theme.muted, fontSize: 12, marginTop: 2 },
+  logoutButton: { backgroundColor: theme.danger, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
   logoutText: { color: '#fff', fontSize: 12, fontWeight: '800' },
   content: { gap: 12, padding: 14, paddingBottom: 32 },
   sectionNav: { gap: 8 },
-  sectionButton: { backgroundColor: '#fff', borderColor: '#d8e2ed', borderRadius: 8, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 },
-  activeSectionButton: { backgroundColor: '#174ea6', borderColor: '#174ea6' },
-  sectionButtonText: { color: '#46586b', fontSize: 13, fontWeight: '800' },
+  sectionButton: { backgroundColor: theme.surface, borderColor: theme.border, borderRadius: 8, borderWidth: 1, paddingHorizontal: 14, paddingVertical: 10 },
+  activeSectionButton: { backgroundColor: theme.primary, borderColor: theme.primary },
+  sectionButtonText: { color: theme.mutedStrong, fontSize: 13, fontWeight: '800' },
   activeSectionButtonText: { color: '#fff' },
-  panel: { backgroundColor: '#fff', borderColor: '#d8e2ed', borderRadius: 8, borderWidth: 1, padding: 14 },
+  panel: { backgroundColor: theme.surface, borderColor: theme.border, borderRadius: 8, borderWidth: 1, padding: 14 },
   sectionHeader: { alignItems: 'flex-start', flexDirection: 'row', gap: 10, justifyContent: 'space-between' },
-  panelTitle: { color: '#1f2d3d', fontSize: 20, fontWeight: '800' },
-  panelCopy: { color: '#607184', fontSize: 13, lineHeight: 19, marginTop: 4 },
-  sectionLabel: { color: '#6b7b8c', fontSize: 11, fontWeight: '800', marginTop: 16, textTransform: 'uppercase' },
+  panelTitle: { color: theme.text, fontSize: 20, fontWeight: '800' },
+  panelCopy: { color: theme.muted, fontSize: 13, lineHeight: 19, marginTop: 4 },
+  sectionLabel: { color: theme.muted, fontSize: 11, fontWeight: '800', marginTop: 16, textTransform: 'uppercase' },
   teacherChips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
-  teacherChip: { backgroundColor: '#edf2f7', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
-  teacherChipText: { color: '#2f4052', fontSize: 13, fontWeight: '700' },
-  smallButton: { backgroundColor: '#edf2f7', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
-  smallButtonText: { color: '#174ea6', fontSize: 12, fontWeight: '800' },
+  teacherChip: { backgroundColor: theme.chip, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
+  teacherChipText: { color: theme.mutedStrong, fontSize: 13, fontWeight: '700' },
+  smallButton: { backgroundColor: theme.chip, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
+  smallButtonText: { color: theme.primary, fontSize: 12, fontWeight: '800' },
   dayControl: { alignItems: 'center', flexDirection: 'row', gap: 8, justifyContent: 'space-between', marginTop: 14 },
-  dayArrowButton: { alignItems: 'center', backgroundColor: '#edf2f7', borderRadius: 8, minWidth: 82, paddingHorizontal: 10, paddingVertical: 10 },
-  dayArrowText: { color: '#174ea6', fontSize: 12, fontWeight: '800' },
+  dayArrowButton: { alignItems: 'center', backgroundColor: theme.chip, borderRadius: 8, minWidth: 82, paddingHorizontal: 10, paddingVertical: 10 },
+  dayArrowText: { color: theme.primary, fontSize: 12, fontWeight: '800' },
   selectedDayBox: { alignItems: 'center', flex: 1 },
-  selectedDayText: { color: '#1f2d3d', fontSize: 18, fontWeight: '800' },
-  todayBadge: { color: '#d93025', fontSize: 11, fontWeight: '800', marginTop: 2, textTransform: 'uppercase' },
+  selectedDayText: { color: theme.text, fontSize: 18, fontWeight: '800' },
+  todayBadge: { color: theme.danger, fontSize: 11, fontWeight: '800', marginTop: 2, textTransform: 'uppercase' },
   optionRow: { gap: 8, paddingVertical: 12 },
-  optionButton: { backgroundColor: '#edf2f7', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
-  activeOptionButton: { backgroundColor: '#174ea6' },
-  optionText: { color: '#4d5d6c', fontSize: 12, fontWeight: '800' },
+  optionButton: { backgroundColor: theme.chip, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
+  activeOptionButton: { backgroundColor: theme.primary },
+  optionText: { color: theme.mutedStrong, fontSize: 12, fontWeight: '800' },
   activeOptionText: { color: '#fff' },
   card: {
-    backgroundColor: '#fff',
-    borderColor: '#dce5ef',
+    backgroundColor: theme.surface,
+    borderColor: theme.border,
     borderRadius: 8,
     borderWidth: 1,
     marginTop: 10,
     padding: 14,
   },
   cardTop: { alignItems: 'flex-start', flexDirection: 'row', justifyContent: 'space-between', gap: 10 },
-  subject: { color: '#1f2d3d', flex: 1, fontSize: 17, fontWeight: '800' },
-  classType: { backgroundColor: '#feeceb', borderRadius: 8, color: '#d93025', fontSize: 12, fontWeight: '800', paddingHorizontal: 8, paddingVertical: 4 },
+  subject: { color: theme.text, flex: 1, fontSize: 17, fontWeight: '800' },
+  classType: { backgroundColor: theme.dangerSoft, borderRadius: 8, color: theme.danger, fontSize: 12, fontWeight: '800', paddingHorizontal: 8, paddingVertical: 4 },
   metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginTop: 6 },
-  metaText: { color: '#667789', fontSize: 12, fontWeight: '700' },
-  detailList: { backgroundColor: '#f7f9fc', borderRadius: 8, marginTop: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  metaText: { color: theme.muted, fontSize: 12, fontWeight: '700' },
+  detailList: { backgroundColor: theme.surfaceSoft, borderRadius: 8, marginTop: 10, paddingHorizontal: 12, paddingVertical: 8 },
   detailRow: {
     alignItems: 'center',
-    borderBottomColor: '#e3eaf2',
+    borderBottomColor: theme.border,
     borderBottomWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
     minHeight: 34,
   },
-  detailLabel: { color: '#738496', fontSize: 11, fontWeight: '800', paddingRight: 12, textTransform: 'uppercase', width: 64 },
-  detailValue: { color: '#1f2d3d', flex: 1, fontSize: 14, fontWeight: '700', textAlign: 'right' },
-  teacherName: { color: '#1f2d3d', fontSize: 14, fontWeight: '800', marginTop: 10 },
-  emptyText: { color: '#667789', lineHeight: 20, marginTop: 16, textAlign: 'center' },
+  detailLabel: { color: theme.muted, fontSize: 11, fontWeight: '800', paddingRight: 12, textTransform: 'uppercase', width: 64 },
+  detailValue: { color: theme.text, flex: 1, fontSize: 14, fontWeight: '700', textAlign: 'right' },
+  teacherName: { color: theme.text, fontSize: 14, fontWeight: '800', marginTop: 10 },
+  emptyText: { color: theme.muted, lineHeight: 20, marginTop: 16, textAlign: 'center' },
   adminGrid: { gap: 10, marginTop: 12 },
-  uploadButton: { alignItems: 'center', backgroundColor: '#174ea6', borderRadius: 8, marginTop: 14, padding: 15 },
+  uploadButton: { alignItems: 'center', backgroundColor: theme.primary, borderRadius: 8, marginTop: 14, padding: 15 },
   uploadButtonText: { color: '#fff', fontSize: 15, fontWeight: '800' },
-  uploadStatus: { color: '#46586b', fontSize: 13, lineHeight: 19, marginTop: 10 },
-  adminDivider: { height: 1, backgroundColor: '#e0e7f0', marginVertical: 18 },
-  uploadSectionLabel: { color: '#46586b', fontSize: 11, fontWeight: '800', marginBottom: 10, textTransform: 'uppercase' },
-  adminAction: { backgroundColor: '#f7f9fc', borderColor: '#e0e7f0', borderRadius: 8, borderWidth: 1, padding: 12 },
-  adminActionText: { color: '#1f2d3d', fontSize: 15, fontWeight: '800' },
-  adminStatus: { color: '#667789', fontSize: 12, fontWeight: '700', marginTop: 4 },
+  uploadStatus: { color: theme.mutedStrong, fontSize: 13, lineHeight: 19, marginTop: 10 },
+  adminDivider: { height: 1, backgroundColor: theme.border, marginVertical: 18 },
+  uploadSectionLabel: { color: theme.mutedStrong, fontSize: 11, fontWeight: '800', marginBottom: 10, textTransform: 'uppercase' },
+  adminAction: { backgroundColor: theme.surfaceSoft, borderColor: theme.border, borderRadius: 8, borderWidth: 1, padding: 12 },
+  adminActionText: { color: theme.text, fontSize: 15, fontWeight: '800' },
+  adminStatus: { color: theme.muted, fontSize: 12, fontWeight: '700', marginTop: 4 },
 });
